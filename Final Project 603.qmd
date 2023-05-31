@@ -1,0 +1,270 @@
+---
+title: "Impacts on Miami Housing Prices"
+author: "Quinn He"
+desription: "Final Project for 603"
+date: "12/13/2022"
+format:
+  html:
+    toc: true
+    code-fold: true
+    code-copy: true
+    code-tools: true
+categories:
+  - Quinn
+  
+---
+
+```{r}
+#| label: setup
+#| warning: false
+
+library(tidyverse)
+library(lmtest)
+library(sf)
+library(mapview)
+library(GGally)
+library(stargazer)
+
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data Read-in
+
+```{r}
+
+miami_housing <- read_csv("miami-housing.csv")
+
+```
+
+## Introduction and Descriptive Statistics
+
+Housing prices are always difficult to predict and can fluctuate randomly due to various variables or economic events. At the core, location is an extremely important factor in dictating the price of houses, and always will be. The purpose of this project is not to break new ground in the study of house prices, but to implement multiple regression techniques in determining how important home location is for single-family houses in Miami. I am particularly interested in Miami due to its proximity to the ocean and because Florida is a flat, low elevation state. With the threat of climate change and the increase in hurricanes every year, I want to examine Miami's housing market in without climate variables included. For a future study, I would be interested to see if my discoveries hold up with increase in sea level and hurricane variables implemented. 
+
+Previous studies have pointed to outside factors like unemployment rate, mortgage rates, stocks, etc. as determinants of house prices, but for this study location is of primary concern. 
+
+The price of houses in Miami are influenced by their location, which includes the distance from various desirable locations. 
+
+The dataset chosen for the regression analysis contains information on 13,932 single-family homes sold in Miami. 
+
+Below are the names of the columns and what each one represents:
+
+PARCELNO: unique identifier for each property. About 1% appear multiple times.
+SALE_PRC: sale price ($)
+LND_SQFOOT: land area (square feet)
+TOTLVGAREA: floor area (square feet)
+SPECFEATVAL: value of special features (e.g., swimming pools) ($)
+RAIL_DIST: distance to the nearest rail line (an indicator of noise) (feet)
+OCEAN_DIST: distance to the ocean (feet)
+WATER_DIST: distance to the nearest body of water (feet)
+CNTR_DIST: distance to the Miami central business district (feet)
+SUBCNTR_DI: distance to the nearest subcenter (feet)
+HWY_DIST: distance to the nearest highway (an indicator of noise) (feet)
+age: age of the structure
+avno60plus: dummy variable for airplane noise exceeding an acceptable level
+structure_quality: quality of the structure
+month_sold: sale month in 2016 (1 = jan)
+LATITUDE
+LONGITUDE
+
+I change a few of the variable names to make calling into functions easier because I do not always want to refer to all caps lettering. 
+
+```{r}
+
+miami_housing <- miami_housing %>% 
+  rename("latitude" = "LATITUDE",
+         "longitude" = "LONGITUDE",
+         "sale_price" = "SALE_PRC",  
+         "land_sqfoot" = "LND_SQFOOT",  
+         "floor_sqfoot" = "TOT_LVG_AREA",
+         "special_features" = "SPEC_FEAT_VAL",  
+         "dist_2_nearest_water" = "WATER_DIST",  
+         "dist_2_biz_center" = "CNTR_DIST",  
+         "dis_2_nearest_subcenter"= "SUBCNTR_DI", 
+         "home_age" = "age") 
+
+
+```
+## Exploratory Analysis
+
+Before any model fitting and analysis, it would be beneficial to get an overall view of the data I am dealing with. With the summary() function I can get a large table that lets me look at all the different summary statistics of each variable. First off, the special features variable is denoted in price of a certain feature to the home, be it a swimming pool, solar power, or a hot tub. Control variables will help determine how important the distance to ocean variable is on the sale price.
+```{r}
+
+summary(miami_housing)
+
+```
+
+```{r}
+
+miami_housing %>% 
+  ggplot(aes(OCEAN_DIST, sale_price))+
+  geom_point() +
+  labs(title = "Price Relationship between Final Sale Price and Distance to Ocean", x = "Distance(ft) to Ocean", y = "Sale Price($)")
+
+
+```
+The graph indicates homes that are closer to the ocean tend to have a higher sale price than homes that are farther away. I notice at the 40,000 and 60,000 mark of distance, there is a general spike in house prices, but I cannot determine what that would be. As stated previously, there are many other factors that can contribute to housing price, but the graph shows distance to ocean is a clear predictor. I will now log this model to correct for the U shaped trend these points take. 
+
+```{r}
+ 
+#logged
+miami_housing %>% 
+  ggplot(aes(OCEAN_DIST, log(sale_price)))+
+  geom_point() +
+  labs(title = "Price Relationship between Final Sale Price and Distance to Ocean", x = "Distance(ft) to Ocean", y = "Sale Price($)")
+
+
+```
+
+I want to get a quick summary to understand how age impacts the structure of the home and in turn impacts the price. As I expected, homes with the lowest quality of their structure are on average the oldest and cheapest. For the most part, this trend follows the same for the other home ages and structure quality. Structure 3 is interesting because homes there are the youngest and also the most expensive. I included the distance to ocean variable to see how this relates to the research project and I found structure 3 is also the closest to the ocean, which may indicate a substantial impact on price. 
+
+Since newer homes that have the highest quality structure are the second most expensive, it also seems structure quality plays a significant role in the determination of house price when distance to ocean is not valued. 
+```{r}
+
+miami_housing %>% 
+  group_by(structure_quality) %>% 
+  summarise(mean(home_age),  mean(sale_price), mean(OCEAN_DIST))
+
+
+
+```
+
+
+```{r}
+miami_housing %>% 
+  group_by(structure_quality)
+ggplot(aes(y = home_age, x = structure_quality))+
+  geom_boxplot()
+
+
+```
+
+```{r}
+p <- miami_housing %>% 
+  ggplot(aes(sale_price))+
+  geom_histogram()+
+  labs(title = "Distribution of Sale Price($) for Single Family Homes in Miami", x = "Sale Price($)", y = "Count")
+
+library(scales)
+p + scale_x_continuous(labels = label_comma())
+```
+This visualization depicts the distribution of homes based on their sale price. Most of the prices of homes fall slightly below the 500,000 mark at around 400,000 dollars as I would have to guess. A few homes are well past the 1 million and 2 million dollar mark. 
+
+The map view is very cluttered, but it is an interactive map that allows me to click on the data point and look at all the information associated with that house. For example, data points in Key Biscayne range from about $1.6 to $2.6 million. Most of the homes are only ~2000 feet away from the ocean. The case is the same for houses in Miami Beach, Surf Side, and Sunny Isles Beach. 
+```{r}
+
+#library(RColorBrewer)
+mapview(miami_housing, xcol= "longitude", ycol = "latitude", legend = mapviewGetOption("sale_price"), crs = 4269, grid = FALSE)
+
+```
+
+## Research Question
+
+Does the adage of, location, location, location hold true in Miami? By creating regression models with the variables associated with location of single family homes in Miami, I should be able to see how important location is to house prices. 
+
+## Hypothesis
+
+Alternative: Homes closer to ocean will have a higher sale price
+Null: Distance to ocean has no impact on sale price
+
+
+
+#Analysis
+
+I first want to check for multicollinearity between the variables because if variables I use are correlated with one another, it could skew my results, leading to falsely inflated p values and standard errors. The "dist_2" variables are the ones to watch out for. Discuss more
+```{r}
+
+ggpairs(miami_housing, columns = 8:13)
+
+```
+From the plots above, the distance to the business center and distance to the subcenter (subway) are highly correlated at 0.76. My theory for high correlation is these two locations are in the same area or extremely close two it. Other variables are moderately correlated with one another, but not to the extent where I am worried about interaction.
+
+
+## Hypothesis Testing through Model Comparisons
+
+The model below contains only distance to ocean as a predictor of house price, the variable associated with the hypothesis. 
+
+```{r}
+
+m1 <- lm(sale_price ~ OCEAN_DIST, data = miami_housing)
+
+summary(m1)
+
+```
+
+```{r}
+
+m4 <- lm(sale_price ~ OCEAN_DIST + dist_2_nearest_water + dis_2_nearest_subcenter + HWY_DIST, data = miami_housing)
+
+```
+I've gotten rid of the distance to business variable since it's p value is not significant to the analysis. Here I am hesitant to get rid of another variable because they all now contribute to the regression equation with highly significant p values.
+```{r}
+
+m3 <- lm(sale_price ~ RAIL_DIST + OCEAN_DIST + dist_2_nearest_water + dis_2_nearest_subcenter + HWY_DIST, data = miami_housing)
+
+```
+
+```{r}
+
+m2 <- lm(sale_price ~ OCEAN_DIST + floor_sqfoot, data = miami_housing)
+
+
+```
+The m4 model is used to have floor square footage of the home as a control variable in model comparisons. 
+```{r}
+
+m3 <- lm(sale_price ~ ., data = miami_housing)
+
+
+stargazer(m1, m2, m3, type = "text")
+```
+A base regression model with every variable in it shows an adjusted R squared of 0.71. This does not indicate best fit, but it's valuable to see the regression model with every variable. 
+
+## Diagnostic Plots
+
+```{r}
+
+logged_m1 <- lm(log(sale_price) ~ log(OCEAN_DIST), data = miami_housing)
+
+logged_m4 <- lm(log(sale_price) ~ log(OCEAN_DIST) + log(floor_sqfoot), data = miami_housing)
+
+summary(m4)
+
+AIC(m4)
+
+AIC(m1)
+
+AIC(m3)
+
+AIC(m2)
+
+AIC(m5)
+summary(m5)
+
+glimpse(miami_housing)
+```
+
+
+Unlogged m1 model
+```{r}
+
+par(mfrow = c(2,3)); plot(m4, which = 1:6)
+
+```
+The residuals vs fitted plot indicates some heteroskedasticity with the fanning out of the residuals as the values increase. As the fitted values increase, so does the variance of the residuals which is a problem because all the values should have equal variance across the plot. I can fix this with a transformation of the dependent variable.
+
+Normal QQ is nonlinear demonstrating my data has some extreme values. 
+
+The Cook's distance graph indicates 2 outliers but nothing too significant. 
+
+
+Logged m1 model
+```{r}
+
+par(mfrow = c(2,3)); plot(logged_m4, which = 1:6)
+
+```
+In the second diagnostic plot, I logged the sale price variable to hopefully correct the assumptions of linearity since a few appear to be violated from the unlogged plots. 
+## Results/Conclusion
+
+Distance to ocean does impact sale price. Based off the visualizations and model fit, I can conclude that a low distance to ocean indicates a high sale price. 
